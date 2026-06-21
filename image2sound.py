@@ -50,16 +50,14 @@ def perception_to_freq(t, min_freq, max_freq):
     return min_freq * (max_freq / min_freq) ** t
 
 def get_frequencies(img, curve):
-    freqs = []
     min_freq = 200
     max_freq = 2000
-    
-    for index, coord in enumerate(curve):
-        t = index / max(1, len(curve) - 1)
-        freq = perception_to_freq(t, min_freq, max_freq)
-        freqs.append((freq, img[coord[0], coord[1]]))
-    
-    return freqs
+    curve_arr = np.array(curve)                                                   # (N, 2)
+    N = len(curve_arr)
+    t = np.arange(N, dtype=np.float32) / max(1, N - 1)                           # (N,)
+    freqs = (min_freq * (max_freq / min_freq) ** t).astype(np.float32)            # (N,)
+    amps  = img[curve_arr[:, 0], curve_arr[:, 1]].astype(np.float32)             # (N,)
+    return freqs, amps
 
 def generate_sine_wave(frequency, duration, sample_rate=44100, amplitude=0.5):
     t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
@@ -71,15 +69,17 @@ def generate_silence(duration, sample_rate):
     return np.zeros(num_samples, dtype=np.float32)
 
 def generate_sound(img, curve, sample_rate=44100, volume=1, duration=10):
-    freqs = get_frequencies(img, curve)
-    samples = generate_silence(duration, sample_rate)
-    for freq, amplitude in freqs:
-        samples += generate_sine_wave(freq, duration, sample_rate, amplitude)
+    freqs, amps = get_frequencies(img, curve)
+    n_samples = int(sample_rate * duration)
+    t = np.linspace(0, duration, n_samples, endpoint=False, dtype=np.float32)    # (S,)
+    # build all sine waves at once: (N, S), then collapse to (S,)
+    waves = (amps / 255.0)[:, None] * np.sin(2 * np.pi * freqs[:, None] * t[None, :])
+    samples = waves.sum(axis=0)
     max_val = np.max(np.abs(samples))
     if max_val > 0:
         samples /= max_val
     samples *= volume
-    return samples
+    return samples.astype(np.float32)
 
 def generate_hilbert_sound(img, hilbert_iterations, sample_rate=44100, volume=1, duration=10):
     curve = hilbert.generate(hilbert_iterations)
