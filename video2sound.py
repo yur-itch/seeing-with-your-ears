@@ -44,7 +44,8 @@ def stitch_audio_with_crossfade(buffers, sample_rate=44100, fade_ms=2):
     return np.concatenate(output_parts)
 
 def generate_video_with_sound(video_path, hilbert_iterations=4, frame_rate=None, volume=0.8,
-                              output_path="bouncing_ball_with_sound.mp4", output_size=256):
+                              output_path="bouncing_ball_with_sound.mp4", output_size=256,
+                              batch_size=32):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise FileNotFoundError(f"Cannot open video: {video_path}")
@@ -69,11 +70,15 @@ def generate_video_with_sound(video_path, hilbert_iterations=4, frame_rate=None,
     tmp_video_file = tempfile.NamedTemporaryFile(delete=False, suffix=".avi").name
     tmp_writer = None
 
-    # Pre-calculate curve once
+    # Pre-calculate curve and sin matrix once for the whole video
     hilbert_curve = hilbert.generate(hilbert_iterations)
+    sin_waves, curve_arr = image2sound.precompute_sin_waves(
+        hilbert_curve, sample_rate=44100, duration=audio_generation_duration
+    )
 
     frame_count = 0
-    
+    sound_batch = []   # accumulates prepared grayscale frames for batch audio synthesis
+
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -83,29 +88,30 @@ def generate_video_with_sound(video_path, hilbert_iterations=4, frame_rate=None,
         img_for_sound = image2sound.load_and_prepare_image_from_array(frame, hilbert_iterations)
 
         # 2. Process image for Video (Visuals)
-        # Resize the PROCESSED image (img_for_sound) to output size
-        # We must convert it back to BGR for the video writer
         out_frame = cv2.resize(img_for_sound, (output_size, output_size), interpolation=cv2.INTER_NEAREST)
         out_frame = cv2.cvtColor(out_frame, cv2.COLOR_GRAY2BGR)
 
-        # 3. Generate Sound
-        samples = image2sound.generate_sound(
-            img_for_sound, 
-            hilbert_curve,
-            sample_rate=44100,
-            volume=volume,
-            duration=audio_generation_duration 
-        )
-        audio_buffers.append(np.asarray(samples, dtype=np.float32))
+        # 3. Accumulate frame for batched audio generation
+        sound_batch.append(img_for_sound)
+        if len(sound_batch) >= batch_size:
+            batch_samples = image2sound.generate_sound_batch(sound_batch, curve_arr, sin_waves, volume)
+            for s in batch_samples:
+                audio_buffers.append(s)
+            sound_batch = []
 
         # 4. Initialize Writer if needed
         if tmp_writer is None:
-            # MJPG is more robust for temp files than mp4v
             fourcc = cv2.VideoWriter_fourcc(*'MJPG')
             tmp_writer = cv2.VideoWriter(tmp_video_file, fourcc, frame_rate, (output_size, output_size))
 
         tmp_writer.write(out_frame)
         frame_count += 1
+
+    # Flush remaining frames in partial batch
+    if sound_batch:
+        batch_samples = image2sound.generate_sound_batch(sound_batch, curve_arr, sin_waves, volume)
+        for s in batch_samples:
+            audio_buffers.append(s)
 
     cap.release()
     if tmp_writer is not None:

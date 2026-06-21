@@ -81,6 +81,32 @@ def generate_sound(img, curve, sample_rate=44100, volume=1, duration=10):
     samples *= volume
     return samples.astype(np.float32)
 
+def precompute_sin_waves(curve, sample_rate=44100, duration=1.0/60):
+    """Compute the (N, S) sine matrix once — identical for every frame of a video."""
+    min_freq, max_freq = 200, 2000
+    curve_arr = np.array(curve)                                                   # (N, 2)
+    N = len(curve_arr)
+    t_idx = np.arange(N, dtype=np.float32) / max(1, N - 1)                       # (N,)
+    freqs = (min_freq * (max_freq / min_freq) ** t_idx).astype(np.float32)        # (N,)
+    n_samples = int(sample_rate * duration)
+    t = np.linspace(0, duration, n_samples, endpoint=False, dtype=np.float32)    # (S,)
+    sin_waves = np.sin(2 * np.pi * freqs[:, None] * t[None, :]).astype(np.float32)  # (N, S)
+    return sin_waves, curve_arr
+
+def generate_sound_batch(imgs, curve_arr, sin_waves, volume=1):
+    """
+    imgs:      list of B grayscale (H, W) uint8 arrays
+    curve_arr: (N, 2) from precompute_sin_waves
+    sin_waves: (N, S) from precompute_sin_waves
+    Returns:   (B, S) float32, each frame normalised independently
+    """
+    imgs_stack = np.stack(imgs, axis=0)                                           # (B, H, W)
+    amps = imgs_stack[:, curve_arr[:, 0], curve_arr[:, 1]].astype(np.float32)    # (B, N)
+    samples = (amps / 255.0) @ sin_waves                                          # (B, S) matmul
+    max_vals = np.max(np.abs(samples), axis=1, keepdims=True)                    # (B, 1)
+    max_vals = np.where(max_vals > 0, max_vals, 1.0)
+    return (samples / max_vals * volume).astype(np.float32)
+
 def generate_hilbert_sound(img, hilbert_iterations, sample_rate=44100, volume=1, duration=10):
     curve = hilbert.generate(hilbert_iterations)
     samples = generate_sound(img, curve, sample_rate, volume, duration)
