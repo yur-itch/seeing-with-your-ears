@@ -170,7 +170,7 @@ def generate_video_with_sound(video_path, hilbert_iterations=4, frame_rate=None,
 
 if __name__ == "__main__":
     generate_video_with_sound(
-        video_path="samples/videos/forest.mp4",
+        video_path="bouncing_ball.mp4",
         hilbert_iterations=5,
         frame_rate=60,
         volume=0.8,
